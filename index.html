@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手势影像查看台 · 模拟演示</title>
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot-live"></span>
+      <span class="brand-name">不合理蛙AI</span>
+      <span class="badge">模拟演示 · 非临床系统</span>
+    </div>
+    <div class="patient">
+      <span>示例病例</span>
+      <b>LIDC-IDRI-0575</b>
+      <span class="sep">/</span>
+      <span>胸部 CT</span>
+      <span class="sep">/</span>
+      <span>肺分割重建</span>
+    </div>
+  </header>
+
+  <!-- 左侧手势图例 -->
+  <aside class="panel legend">
+    <h2>手势</h2>
+    <div class="gesture" data-state="GRAB">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M13 22v-5a2 2 0 1 1 4 0v-3a2 2 0 1 1 4 0v-2a2 2 0 1 1 4 0v3a2 2 0 1 1 4 0v9c0 6-3 9-8 9s-8-4-8-9z"/>
+      </svg>
+      <div><b>握拳</b><span>抓住画面</span></div>
+    </div>
+    <div class="gesture" data-state="MOVE">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M6 20h28" fill="none" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M4 20l4-3v6zM36 20l-4-3v6z"/>
+        <path d="M20 12v16" fill="none" stroke-width="1.4" stroke-linecap="round" opacity=".45"/>
+      </svg>
+      <div><b>抓住后移动</b><span>左右转 · 上下俯仰</span></div>
+    </div>
+    <div class="gesture" data-state="ZOOM">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M8 14l7 6-7 6M32 14l-7 6 7 6" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="20" cy="20" r="2.4"/>
+      </svg>
+      <div><b>抓住后前推后拉</b><span>放大 / 缩小</span></div>
+    </div>
+    <div class="gesture" data-state="SLICE">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M9 12h22M9 20h22M9 28h22" fill="none" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M33 8l3 6h-6z" fill="none" stroke-width="1.6" stroke-linejoin="round"/>
+      </svg>
+      <div><b>比耶</b><span>切片模式，上下移动</span></div>
+    </div>
+    <p class="legend-note">抓住是离合：握拳接上，松拳断开。松手后画面停在原处，手怎么动都不影响。转不够就再抓一次。</p>
+  </aside>
+
+  <!-- 右侧读数 -->
+  <aside class="panel readout">
+    <h2>读数</h2>
+    <dl>
+      <div><dt>状态</dt><dd id="r-state">未检测到</dd></div>
+      <div><dt>偏航角</dt><dd id="r-yaw">0.0°</dd></div>
+      <div><dt>俯仰角</dt><dd id="r-pitch">0.0°</dd></div>
+      <div><dt>缩放</dt><dd id="r-zoom">—</dd></div>
+      <div><dt>切片位置</dt><dd id="r-slice">100%</dd></div>
+      <div><dt>手掌宽度</dt><dd id="r-palm">—</dd></div>
+      <div><dt>张开度</dt><dd id="r-open">—</dd></div>
+      <div><dt>帧率</dt><dd id="r-fps">—</dd></div>
+    </dl>
+    <h2 class="second">解剖标记</h2>
+    <ul class="marks">
+      <li><span class="sw sw-l"></span>左肺上叶</li>
+      <li><span class="sw sw-r"></span>右肺下叶</li>
+      <li><span class="sw sw-s"></span>切片平面</li>
+    </ul>
+  </aside>
+
+  <!-- 摄像头小窗 -->
+  <div class="pip">
+    <canvas id="pip" width="560" height="315"></canvas>
+    <div class="pip-label"><span id="pip-status">等待摄像头</span></div>
+  </div>
+
+  <!-- 底部状态条 -->
+  <footer class="statusbar">
+    <div class="track">
+      <span id="track-dot" class="zdot"></span>
+      <span id="track-text">未检测到手</span>
+    </div>
+    <div class="hint">握拳抓住 · 移动旋转 · 前后推拉缩放 · 松拳停止</div>
+  </footer>
+
+  <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
+
+  <div id="boot" class="boot">
+    <div class="boot-inner">
+      <div class="spinner"></div>
+      <p id="boot-msg">正在载入模型</p>
+      <p class="boot-sub">首次载入需要几秒。如果浏览器询问摄像头权限，请允许。</p>
+    </div>
+  </div>
+
+  <pre id="debug" class="debug" hidden></pre>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
