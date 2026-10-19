@@ -50,7 +50,7 @@
         <path d="M8 14l7 6-7 6M32 14l-7 6 7 6" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         <circle cx="20" cy="20" r="2.4"/>
       </svg>
-      <div><b>抓住后前推后拉</b><span>放大 / 缩小</span></div>
+      <div><b>双手捏合</b><span>拉开放大 · 合拢缩小</span></div>
     </div>
     <div class="gesture" data-state="SLICE">
       <svg viewBox="0 0 40 40" aria-hidden="true">
@@ -71,7 +71,7 @@
       <div><dt>俯仰角</dt><dd id="r-pitch">0.0°</dd></div>
       <div><dt>缩放</dt><dd id="r-zoom">—</dd></div>
       <div><dt>切片位置</dt><dd id="r-slice">100%</dd></div>
-      <div><dt>手掌宽度</dt><dd id="r-palm">—</dd></div>
+      <div><dt>手宽</dt><dd id="r-palm">—</dd></div>
       <div><dt>张开度</dt><dd id="r-open">—</dd></div>
       <div><dt>帧率</dt><dd id="r-fps">—</dd></div>
     </dl>
@@ -95,7 +95,7 @@
       <span id="track-dot" class="zdot"></span>
       <span id="track-text">未检测到手</span>
     </div>
-    <div class="hint">握拳抓住 · 移动旋转 · 前后推拉缩放 · 松拳停止</div>
+    <div class="hint">握拳抓住 · 移动旋转 · 双手捏合缩放 · 比耶切片</div>
   </footer>
 
   <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
@@ -107,8 +107,6 @@
       <p class="boot-sub">首次载入需要几秒。如果浏览器询问摄像头权限，请允许。</p>
     </div>
   </div>
-
-  <pre id="debug" class="debug" hidden></pre>
 
   <script type="module" src="/src/main.js"></script>
 </body>

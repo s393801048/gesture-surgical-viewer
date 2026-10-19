@@ -200,16 +200,6 @@ body{
 .boot-inner p{margin:0;font-size:14px;color:var(--text);letter-spacing:.05em}
 .boot-sub{margin-top:10px !important;font-size:12.5px;color:var(--muted);line-height:1.6}
 
-/* ---------- 调试面板 ---------- */
-.debug{
-  position:fixed;right:22px;bottom:56px;z-index:9;
-  margin:0;padding:10px 12px;
-  font-family:var(--mono);font-size:13px;line-height:1.75;
-  color:var(--accent);background:rgba(4,7,11,.94);
-  border:1px solid var(--line-strong);border-radius:6px;
-  min-width:440px;white-space:pre;padding:14px 16px;
-}
-
 @media (max-height: 820px){
   .pip{width:300px;height:169px}
   .legend{top:40%}

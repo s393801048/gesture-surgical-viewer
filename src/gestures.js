@@ -1,11 +1,12 @@
 import { CONFIG } from './config.js';
-import { OneEuro, clamp, lerp } from './filter.js';
+import { OneEuro, clamp } from './filter.js';
 
 const IDLE = 'IDLE';
 const CALIBRATING = 'CALIBRATING';
 const TRACKING = 'TRACKING';
 
 const WRIST = 0;
+const THUMB_TIP = 4;
 const INDEX_MCP = 5, INDEX_PIP = 6, INDEX_TIP = 8;
 const MIDDLE_MCP = 9, MIDDLE_PIP = 10, MIDDLE_TIP = 12;
 const RING_MCP = 13, RING_PIP = 14, RING_TIP = 16;
@@ -31,28 +32,19 @@ function fingerStraightness(mcp, pip, tip) {
   return clamp(1 - Math.acos(cos) / (Math.PI * 0.8), 0, 1);
 }
 
-const mapRange = (v, a, b, c, d) => {
-  const t = clamp((v - a) / (b - a), 0, 1);
-  return c + (d - c) * t;
-};
-
 export class GestureController {
   constructor() {
     this.state = IDLE;
     this.yaw = 0;
     this.pitch = 0;
     this.zoom = 1.0;
-    this.yawVel = 0;
-    this.pitchVel = 0;
-    this.zoomVel = 0;
-    this.zoomInOpen = 0.95;
-    this.zoomOutOpen = 0.55;
+    this.zoomTarget = 1.0;
     this.slice = 1;
 
-    this.fx = new OneEuro({ minCutoff: 0.85, beta: 0.03, dCutoff: 1.0 });
-    this.fy = new OneEuro({ minCutoff: 0.85, beta: 0.03, dCutoff: 1.0 });
-    this.fopen = new OneEuro({ minCutoff: 1.8, beta: 0.03, dCutoff: 1.0 });
-    this.fpalm = new OneEuro({ minCutoff: 1.2, beta: 0.015, dCutoff: 1.0 });
+    // 每只手各一套滤波器，按左右手分开存，两只手的数据不能混在一起滤
+    this.handFilters = new Map();
+    this.handPinch = new Map();
+    this.fdist = new OneEuro({ minCutoff: 0.8, beta: 0.02, dCutoff: 1.0 });
 
     this.lastSeen = -Infinity;
     this.calib = null;
@@ -63,12 +55,60 @@ export class GestureController {
     this.grab = false;
     this.anchorX = 0;
     this.anchorY = 0;
-    this.anchorPalm = 0;
-    this.anchorZoom = 1;
+
+    this.zoomActive = false;
+    this.zoomStartDist = 0;
+    this.zoomStartValue = 1;
+
+    this.handCount = 0;
+    this.pinchCount = 0;
+    this.handInfo = [];
+    this.pinchSpan = 0;
 
     this.metrics = {
-      openness: 0, palmWidth: 0, pinch: 0,
+      openness: 0, opennessSmooth: 0, palmWidth: 0, pinch: 0,
       cx: 0.5, cy: 0.5, fingers: [0, 0, 0, 0],
+    };
+  }
+
+  _filters(label) {
+    let f = this.handFilters.get(label);
+    if (!f) {
+      f = {
+        fx: new OneEuro({ minCutoff: 0.85, beta: 0.03, dCutoff: 1.0 }),
+        fy: new OneEuro({ minCutoff: 0.85, beta: 0.03, dCutoff: 1.0 }),
+        fopen: new OneEuro({ minCutoff: 1.8, beta: 0.03, dCutoff: 1.0 }),
+        fpalm: new OneEuro({ minCutoff: 1.2, beta: 0.015, dCutoff: 1.0 }),
+      };
+      this.handFilters.set(label, f);
+    }
+    return f;
+  }
+
+  _metrics(landmarks, label, t) {
+    const P = landmarks.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z }));
+    const fingers = FINGERS.map(([m, p, q]) => fingerStraightness(P[m], P[p], P[q]));
+    const opennessRaw = fingers.reduce((a, b) => a + b, 0) / fingers.length;
+    const f = this._filters(label);
+
+    // 手的长度基准：手腕到中指根。手一伸一缩，分子分母一起变，比值不受影响
+    const handSize = Math.max(1e-4, dist2(P[WRIST], P[MIDDLE_MCP]));
+    const palmWidth = f.fpalm.filter(dist2(P[INDEX_MCP], P[PINKY_MCP]), t);
+    const pinchRatio = dist2(P[THUMB_TIP], P[INDEX_TIP]) / handSize;
+    // 中指伸出的程度。握拳时很小，捏合时接近伸直
+    const reachRatio = dist2(P[WRIST], P[MIDDLE_TIP]) / handSize;
+
+    const cx = f.fx.filter((P[WRIST].x + P[MIDDLE_MCP].x) / 2, t);
+    const cy = f.fy.filter((P[WRIST].y + P[MIDDLE_MCP].y) / 2, t);
+    const openness = f.fopen.filter(opennessRaw, t);
+
+    return { label, P, fingers, opennessRaw, openness, palmWidth, pinchRatio, reachRatio, cx, cy };
+  }
+
+  _pinchPoint(P) {
+    return {
+      x: (P[THUMB_TIP].x + P[INDEX_TIP].x) / 2,
+      y: (P[THUMB_TIP].y + P[INDEX_TIP].y) / 2,
     };
   }
 
@@ -76,14 +116,19 @@ export class GestureController {
     this.state = IDLE;
     this.peace = false;
     this.grab = false;
-    this.fx.reset();
-    this.fy.reset();
-    this.fopen.reset();
-    this.fpalm.reset();
+    this.zoomActive = false;
+    for (const f of this.handFilters.values()) {
+      f.fx.reset();
+      f.fy.reset();
+      f.fopen.reset();
+      f.fpalm.reset();
+    }
+    this.handPinch.clear();
+    this.fdist.reset();
   }
 
-  update(landmarks, now, dt) {
-    if (!landmarks || landmarks.length < 21) {
+  update(hands, now, dt) {
+    if (!hands || !hands.length) {
       if (now - this.lastSeen > CONFIG.lostTimeoutMs && this.state !== IDLE) this.reset();
       return this.snapshot();
     }
@@ -91,22 +136,46 @@ export class GestureController {
     this.lastSeen = now;
     const t = now / 1000;
 
-    const P = landmarks.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z }));
+    const H = hands.map(({ landmarks, label }) => this._metrics(landmarks, label, t));
+    this.handCount = H.length;
 
-    const fingers = FINGERS.map(([m, p, q]) => fingerStraightness(P[m], P[p], P[q]));
-    const opennessRaw = fingers.reduce((a, b) => a + b, 0) / fingers.length;
-    const palmWidth = this.fpalm.filter(dist2(P[INDEX_MCP], P[PINKY_MCP]), t);
-    const pinch = dist2(P[4], P[INDEX_TIP]) / Math.max(1e-4, palmWidth);
-    const cx = this.fx.filter((P[WRIST].x + P[MIDDLE_MCP].x) / 2, t);
-    const cy = this.fy.filter((P[WRIST].y + P[MIDDLE_MCP].y) / 2, t);
-    const openness = this.fopen.filter(opennessRaw, t);
+    // 每只手判捏合。进入和退出用两个阈值；握拳时中指蜷着，不算捏合
+    for (const h of H) {
+      const was = this.handPinch.get(h.label) === true;
+      const freeHand = h.reachRatio > CONFIG.pinchReachMin;
+      const on = was
+        ? h.pinchRatio < CONFIG.pinchExit && freeHand
+        : h.pinchRatio < CONFIG.pinchEnter && freeHand;
+      this.handPinch.set(h.label, on);
+      h.pinch = on;
+    }
 
-    this.metrics = { openness: opennessRaw, opennessSmooth: openness, palmWidth, pinch, cx, cy, fingers };
+    const pinching = H.filter((h) => h.pinch);
+    this.pinchCount = pinching.length;
+    this.handInfo = H.map((h) => ({
+      label: h.label,
+      openness: h.opennessRaw,
+      pinchRatio: h.pinchRatio,
+      reachRatio: h.reachRatio,
+      pinch: h.pinch,
+    }));
 
-    // ---- 校准：把手掌位置记成旋转的中心 ----
+    // 主手：取握拳的那只。正在捏合的手不算握拳，免得捏合时画面转起来
+    const primary = H.find((h) => h.opennessRaw < CONFIG.grabEnter && !h.pinch) ?? H[0];
+    this.metrics = {
+      openness: primary.opennessRaw,
+      opennessSmooth: primary.openness,
+      palmWidth: primary.palmWidth,
+      pinch: primary.pinchRatio,
+      cx: primary.cx,
+      cy: primary.cy,
+      fingers: primary.fingers,
+    };
+
+    // ---- 校准：把手的位置记成旋转的中心 ----
     if (!this.calib) {
       this.state = CALIBRATING;
-      this.calibSamples.push({ cx, cy, openness });
+      this.calibSamples.push({ cx: primary.cx, cy: primary.cy, openness: primary.openness });
       if (this.calibSamples.length >= CONFIG.calibrateFrames) {
         const n = this.calibSamples.length;
         this.calib = {
@@ -120,7 +189,41 @@ export class GestureController {
     }
 
     this.state = TRACKING;
-    const base = this.calib;
+
+    // ---- 双手捏合：拉开放大，合拢缩小 ----
+    if (pinching.length === 2) {
+      const raw = dist2(this._pinchPoint(pinching[0].P), this._pinchPoint(pinching[1].P));
+      const span = this.fdist.filter(raw, t);
+      this.pinchSpan = span;
+
+      if (!this.zoomActive) {
+        if (span > CONFIG.pinchMinSpan) {
+          this.zoomActive = true;
+          this.zoomStartDist = span;
+          this.zoomStartValue = this.zoom;
+          this.zoomTarget = this.zoom;
+        }
+      } else {
+        const target = clamp(
+          this.zoomStartValue * (this.zoomStartDist / Math.max(1e-4, span)),
+          CONFIG.zoomNear,
+          CONFIG.zoomFar
+        );
+        const d = target - this.zoomTarget;
+        if (Math.abs(d) > CONFIG.zoomDeadZone) this.zoomTarget = target;
+        else this.zoomTarget += d * 0.02; // 死区里的小变化慢慢渗过去
+        const kz = 1 - Math.exp(-CONFIG.zoomSmooth * dt);
+        this.zoom += (this.zoomTarget - this.zoom) * kz;
+      }
+
+      this.grab = false;
+      this.peace = false;
+      return this.snapshot();
+    }
+    this.zoomActive = false;
+    this.pinchSpan = 0;
+
+    const { fingers, cx, cy, opennessRaw } = primary;
 
     // ---- 比耶：进入切片模式 ----
     const rawIsPeace =
@@ -151,8 +254,6 @@ export class GestureController {
       this.grab = true;
       this.anchorX = cx;
       this.anchorY = cy;
-      this.anchorPalm = palmWidth;
-      this.anchorZoom = this.zoom;
     } else if (this.grab && opennessRaw > CONFIG.grabExit) {
       this.grab = false;
     }
@@ -172,32 +273,13 @@ export class GestureController {
 
     const dy2 = cy - this.anchorY;
     if (Math.abs(dy2) > 0.005) {
-      // 上下同样跟着手走：手往上，模型正面往上翻，露出底部
+      // 手往上，画面往上转；手往下，画面往下转
       this.pitch = clamp(
-        this.pitch + dy2 * CONFIG.pitchPerUnit * (CONFIG.invertPitch ? 1 : -1),
+        this.pitch + dy2 * CONFIG.pitchPerUnit * (CONFIG.invertPitch ? -1 : 1),
         -CONFIG.pitchLimit,
         CONFIG.pitchLimit
       );
       this.anchorY = cy;
-    }
-
-    // 缩放跟着手掌大小走：手推近镜头，手掌变大，画面跟着放大。
-    // 死区 6% 之内算没动，避免手静止时来回抖。
-    if (this.anchorPalm > 1e-4) {
-      const ratio = palmWidth / this.anchorPalm;
-      const adj = ratio - 1;
-      const dz = CONFIG.zoomDeadZone;
-      let eff = 0;
-      if (Math.abs(adj) > dz) {
-        eff = adj - Math.sign(adj) * dz;
-      }
-      const target = clamp(
-        this.anchorZoom * (1 - eff * CONFIG.zoomGain),
-        CONFIG.zoomNear,
-        CONFIG.zoomFar
-      );
-      const kz = 1 - Math.exp(-14 * dt);
-      this.zoom += (target - this.zoom) * kz;
     }
 
     return this.snapshot();
@@ -206,9 +288,14 @@ export class GestureController {
   snapshot() {
     return {
       state: this.state,
-      mode: this.peace ? 'SLICE' : (this.grab ? 'GRAB' : 'FREE'),
+      mode: this.peace ? 'SLICE' : (this.zoomActive ? 'ZOOM' : (this.grab ? 'GRAB' : 'FREE')),
       peace: this.peace,
       grab: this.grab,
+      zoomActive: this.zoomActive,
+      handCount: this.handCount,
+      pinchCount: this.pinchCount,
+      handInfo: this.handInfo || [],
+      pinchSpan: this.pinchSpan,
       yaw: this.yaw,
       pitch: this.pitch,
       zoom: this.zoom,

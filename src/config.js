@@ -1,4 +1,4 @@
-// 阈值都在这里。地址后面加 ?debug，右下角显示实时读数。
+// 阈值都在这里。
 
 export const CONFIG = {
   calibrateFrames: 45,
@@ -15,10 +15,15 @@ export const CONFIG = {
   invertYaw: false, // 默认手往右画面往右转；想反过来改成 true
   invertPitch: false, // 默认手往上画面往上翻；想反过来改成 true
 
-  // ---- 抓住期间，手掌大小变化对应缩放 ----
-  // 手掌宽度已经做了平滑，再加一层死区，手静止时画面不会来回抖
-  zoomDeadZone: 0.06, // 手掌宽度变化超过 6% 才算动作
-  zoomGain: 1.5, // 手掌变化 20% 对应画面变化 21%
+  // ---- 缩放：双手捏合 ----
+  // 拇指尖到食指尖除以手腕到中指根。手离镜头远近、手在画面哪个位置都不影响这个比值。
+  // 中指蜷着（握拳）时不算捏合，避免握拳被当成捏住。
+  pinchEnter: 0.45, // 低于这个比值算捏住
+  pinchExit: 0.60, // 高于这个比值算松开
+  pinchReachMin: 1.20, // 中指伸出程度要高于这个值才算捏合
+  pinchMinSpan: 0.08, // 两手间距小于这个值不启动缩放
+  zoomSmooth: 9,
+  zoomDeadZone: 0.02,
   zoomNear: 0.52,
   zoomFar: 1.32,
 
@@ -29,5 +34,4 @@ export const CONFIG = {
   sliceMin: -0.85,
 
   lostTimeoutMs: 260,
-  debug: new URLSearchParams(location.search).has('debug'),
 };

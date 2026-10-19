@@ -13,7 +13,6 @@ const viewCanvas = $('view');
 const pipCanvas = $('pip');
 const boot = $('boot');
 const bootMsg = $('boot-msg');
-const debugEl = $('debug');
 
 const ui = {
   state: $('r-state'),
@@ -42,7 +41,7 @@ document.body.appendChild(video);
 
 let landmarker = null;
 let lastVideoTime = -1;
-let lastLandmarks = null;
+let lastHands = [];
 let lastTs = 0;
 let fps = 0;
 let fpsAccum = 0;
@@ -64,9 +63,12 @@ function setTrackUI(g) {
   } else if (state === 'TRACKING' && g.peace) {
     ui.trackDot.className = 'zdot grab';
     ui.trackText.textContent = '切片模式 · 手上下移动推进切面';
+  } else if (state === 'TRACKING' && g.zoomActive) {
+    ui.trackDot.className = 'zdot grab';
+    ui.trackText.textContent = '双手捏合 · 拉开放大，合拢缩小';
   } else if (state === 'TRACKING' && g.grab) {
     ui.trackDot.className = 'zdot grab';
-    ui.trackText.textContent = '已抓住 · 移动手旋转，前后推拉缩放';
+    ui.trackText.textContent = '已抓住 · 移动手旋转，松拳后双手捏合缩放';
   } else if (state === 'TRACKING') {
     ui.trackDot.className = 'zdot ready';
     ui.trackText.textContent = '就位 · 握拳抓住画面';
@@ -83,10 +85,13 @@ function highlightLegend(g, hasHand) {
     document.querySelector('.gesture[data-state="SLICE"]')?.classList.add('on');
     return;
   }
+  if (g.zoomActive) {
+    document.querySelector('.gesture[data-state="ZOOM"]')?.classList.add('on');
+    return;
+  }
   if (g.grab) {
     document.querySelector('.gesture[data-state="GRAB"]')?.classList.add('on');
     document.querySelector('.gesture[data-state="MOVE"]')?.classList.add('on');
-    document.querySelector('.gesture[data-state="ZOOM"]')?.classList.add('on');
   }
 }
 
@@ -100,22 +105,9 @@ function refreshReadout(g) {
   ui.palm.textContent = hasHand ? g.palmWidth.toFixed(3) : '—';
   ui.open.textContent = hasHand ? g.opennessSmooth.toFixed(2) : '—';
   ui.fps.textContent = `${Math.round(fps)}`;
-  ui.pipStatus.textContent = hasHand ? '手部追踪中 · 21 点' : '等待手入镜';
+  ui.pipStatus.textContent = hasHand ? `手部追踪中 · ${g.handCount || 1} 只手` : '等待手入镜';
   setTrackUI(g);
   highlightLegend(g, hasHand);
-}
-
-function refreshDebug(g) {
-  if (!CONFIG.debug) return;
-  debugEl.hidden = false;
-  debugEl.textContent =
-    `state      ${g.state}  ${g.mode}\n` +
-    `fingers    食指 ${g.fingers[0].toFixed(2)}  中指 ${g.fingers[1].toFixed(2)}  无名 ${g.fingers[2].toFixed(2)}  小指 ${g.fingers[3].toFixed(2)}\n` +
-    `openness   ${g.opennessSmooth.toFixed(2)}  [握拳 <${CONFIG.opennessFist} / 全开 >${CONFIG.opennessOpen}]\n` +
-        `grab       ${g.grab ? '已抓住' : '未抓住'}  mode ${g.mode}\n` +
-    `center     ${g.cx.toFixed(3)}, ${g.cy.toFixed(3)}\n` +
-    `yaw/pitch  ${g.yaw.toFixed(1)} / ${g.pitch.toFixed(1)}\n` +
-    `zoom/slice ${g.zoom.toFixed(2)} / ${g.slice.toFixed(2)}`;
 }
 
 async function boot_() {
@@ -167,14 +159,15 @@ function loop(now) {
       if (landmarker) {
         try {
           const res = landmarker.detectForVideo(video, now);
-          lastLandmarks = res.landmarks?.[0] ?? null;
-          // 手从左边缘出画时，21 点会短暂贴边抖动，直接丢弃
-          if (lastLandmarks) {
-            const xs = lastLandmarks.map((p) => p.x);
-            if (Math.min(...xs) < 0.02 || Math.max(...xs) > 0.98) {
-              lastLandmarks = null;
-            }
-          }
+          const lms = res.landmarks ?? [];
+          const handed = res.handednesses ?? [];
+          lastHands = lms
+            .map((landmarks, i) => ({ landmarks, label: handed[i]?.[0]?.categoryName ?? String(i) }))
+            // 手从画面边缘出画时，21 点会短暂贴边抖动，直接丢掉这只手
+            .filter(({ landmarks }) => {
+              const xs = landmarks.map((p) => p.x);
+              return Math.min(...xs) >= 0.02 && Math.max(...xs) <= 0.98;
+            });
         } catch (err) {
           console.error('detect failed', err);
         }
@@ -182,14 +175,14 @@ function loop(now) {
     }
   }
 
-  const g = gestures.update(lastLandmarks, now, dt);
+  const g = gestures.update(lastHands, now, dt);
 
   viewer.setYaw(g.yaw);
   viewer.setPitch(g.pitch);
   viewer.setSlice(g.slice);
   viewer.setCameraDistance(g.zoom);
 
-  pip.draw(video, lastLandmarks);
+  pip.draw(video, lastHands);
 
   if (landmarker) {
     fpsAccum += dt;
@@ -205,15 +198,12 @@ function loop(now) {
   if (uiTimer > 0.08) {
     uiTimer = 0;
     refreshReadout(g);
-    refreshDebug(g);
   }
 
   viewer.render();
 }
 
-if (CONFIG.debug) {
-  window.__viewer = viewer;
-  window.__gestures = gestures;
-}
+window.__viewer = viewer;
+window.__gestures = gestures;
 
 boot_();
